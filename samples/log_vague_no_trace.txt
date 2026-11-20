@@ -1,0 +1,5 @@
+ERROR - something went wrong
+ERROR - could not complete the request for jane.doe@example.com
+ERROR - retrying in a moment
+ERROR - could not complete the request for jane.doe@example.com
+ERROR - could not complete the request for jane.doe@example.com

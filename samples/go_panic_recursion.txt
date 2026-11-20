@@ -1,0 +1,23 @@
+panic: runtime error: index out of range [7] with length 7
+
+goroutine 17 [running]:
+	github.com/acme/pool.(*Worker).dispatch(0xc000120000, 0x7)
+	/app/pool/worker.go:142 +0x1d4
+	github.com/acme/pool.(*Worker).dispatch(0xc000120000, 0x7)
+	/app/pool/worker.go:142 +0x1d4
+	github.com/acme/pool.(*Worker).dispatch(0xc000120000, 0x7)
+	/app/pool/worker.go:142 +0x1d4
+	github.com/acme/pool.(*Worker).dispatch(0xc000120000, 0x7)
+	/app/pool/worker.go:142 +0x1d4
+	github.com/acme/pool.(*Worker).dispatch(0xc000120000, 0x7)
+	/app/pool/worker.go:142 +0x1d4
+	github.com/acme/pool.(*Worker).dispatch(0xc000120000, 0x7)
+	/app/pool/worker.go:142 +0x1d4
+	github.com/acme/pool.(*Worker).dispatch(0xc000120000, 0x7)
+	/app/pool/worker.go:142 +0x1d4
+	github.com/acme/pool.(*Worker).dispatch(0xc000120000, 0x7)
+	/app/pool/worker.go:142 +0x1d4
+	github.com/acme/pool.(*Worker).dispatch(0xc000120000, 0x7)
+	/app/pool/worker.go:142 +0x1d4
+main.main()
+	/app/main.go:27 +0x105

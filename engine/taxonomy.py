@@ -1,0 +1,807 @@
+"""Error taxonomy for stacktrace-forge.
+
+A local knowledge base of failure signatures: what each class of error usually
+means, the ranked hypotheses for it, and the concrete check that discriminates
+between them. Pure data - no network calls, no LLM.
+"""
+
+import re
+from typing import Any, Dict, List, Optional
+
+# Severity: critical > high > medium > low
+# fix_risk: how safe the obvious fix is (higher number = safer fix).
+# Hypotheses carry a prior weight (1-5) that the analyser adjusts with evidence.
+
+CATEGORIES: List[Dict[str, Any]] = [
+    {
+        "id": "null_reference",
+        "label": "Null / undefined dereference",
+        "severity": "high",
+        "fix_risk": 70,
+        "patterns": [
+            r"NullPointerException",
+            r"Cannot read propert(?:y|ies) of (?:null|undefined)",
+            r"NullReferenceException",
+            r"NoneType'? (?:has no attribute|' object has no attribute)",
+            r"undefined method .*for nil",
+            r"uninitialized variable",
+            r"nil pointer dereference",
+            r"Object reference not set to an instance of an object",
+            r"unwrap\(\) on a None value",
+        ],
+        "summary": "Something that was expected to exist was null or undefined when it was dereferenced.",
+        "hypotheses": [
+            {
+                "cause": "A required field was never populated on the object that was dereferenced",
+                "why": "The deref happened on a path where the object was built by several different code paths",
+                "check": "Log the object and its fields immediately before the failing line; compare the failing request against the working one",
+                "weight": 4,
+            },
+            {
+                "cause": "A lookup returned nothing (missing map key, empty query result, absent optional record)",
+                "why": "The missing thing was fetched by key or by id rather than created directly",
+                "check": "Re-run the lookup for the exact key in the failing trace and confirm it returns empty",
+                "weight": 4,
+            },
+            {
+                "cause": "An optional dependency was absent and the code took the required path anyway",
+                "why": "The error fires only for requests that omit the optional input",
+                "check": "Find the request in the trace that omits the field and diff it against a successful request",
+                "weight": 3,
+            },
+            {
+                "cause": "A race: the value was reset or freed by another thread between check and use",
+                "why": "The failure is intermittent and the code has no lock around the shared field",
+                "check": "Check whether the same frame appears with different values across occurrences",
+                "weight": 2,
+            },
+            {
+                "cause": "The value crossed a process boundary (serialisation, cache, queue) and lost its shape",
+                "why": "The frame below the deref is a deserialiser or a cache read",
+                "check": "Log the raw payload as it enters the process and compare it with the in-memory shape",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "type_error",
+        "label": "Type / shape mismatch",
+        "severity": "high",
+        "fix_risk": 75,
+        "patterns": [
+            r"TypeError",
+            r"ClassCastException",
+            r"IllegalArgumentException",
+            r"must be of type",
+            r"Cannot convert",
+            r"expected .* got",
+            r"is not a function",
+            r"incompatible type",
+            r"ValueError",
+            r"cannot be cast",
+        ],
+        "summary": "A value was not the type or shape the code assumed it was.",
+        "hypotheses": [
+            {
+                "cause": "The input contract changed shape (a renamed field, a string where a number was expected)",
+                "why": "The value arrived from an external caller or a stored payload",
+                "check": "Capture one raw payload that fails and diff it against one that succeeds",
+                "weight": 4,
+            },
+            {
+                "cause": "A defensive default was silently changed by a config or feature flag",
+                "why": "The value comes from configuration rather than the request",
+                "check": "Compare the live config value against the value in the last known-good deploy",
+                "weight": 3,
+            },
+            {
+                "cause": "A library upgrade changed the return type or the signature",
+                "why": "The failing frame sits directly on a third-party call",
+                "check": "Diff the dependency version between the working and failing build",
+                "weight": 3,
+            },
+            {
+                "cause": "A mixed-version deployment where two services disagree on the schema",
+                "why": "Only some requests fail, and only on the ones that hit the older instance",
+                "check": "Compare the schema version the caller sends with the one the callee expects",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "index_bounds",
+        "label": "Index / key out of range",
+        "severity": "high",
+        "fix_risk": 70,
+        "patterns": [
+            r"ArrayIndexOutOfBoundsException",
+            r"IndexError",
+            r"index out of range",
+            r"list index out of range",
+            r"KeyError",
+            r"key not found",
+            r"NoSuchElementException",
+            r"substring .* out of range",
+            r"RangeError",
+        ],
+        "summary": "The code indexed or keyed into a collection that was shorter or missing than expected.",
+        "hypotheses": [
+            {
+                "cause": "The collection was empty or one element shorter than the code assumed",
+                "why": "The index is computed from a separate counter rather than from the collection length",
+                "check": "Log the collection length and the computed index on the failing request",
+                "weight": 4,
+            },
+            {
+                "cause": "An off-by-one between a zero-based index and a one-based counter",
+                "why": "The index comes from a loop or a position field in the payload",
+                "check": "Check the boundary case (empty collection, collection of size one) in a unit test",
+                "weight": 4,
+            },
+            {
+                "cause": "A key was renamed or the map was built with a different key type",
+                "why": "The key is a string or enum that crosses a serialisation boundary",
+                "check": "Print the actual key set of the map on the failing path",
+                "weight": 3,
+            },
+            {
+                "cause": "A pagination or batching window changed and the code still assumes a full page",
+                "why": "The failing case appears only on the last page of results",
+                "check": "Reproduce with the exact page size the caller used",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "attribute_missing",
+        "label": "Missing attribute / method",
+        "severity": "medium",
+        "fix_risk": 75,
+        "patterns": [
+            r"AttributeError",
+            r"NoSuchMethodError",
+            r"has no attribute",
+            r"does not exist",
+            r"undefined property",
+            r"MethodNotFoundException",
+            r"Unable to find method",
+            r"is not defined",
+        ],
+        "summary": "The code asked for a field or method that does not exist on the object it was given.",
+        "hypotheses": [
+            {
+                "cause": "The object is a different type than expected (a stub, a subclass, a proxy)",
+                "why": "The same call site works for some inputs and fails for others",
+                "check": "Log the runtime class of the receiver next to the failing call",
+                "weight": 4,
+            },
+            {
+                "cause": "A field was renamed in a schema but the caller was not updated",
+                "why": "The attribute name is a string literal in the call",
+                "check": "Grep the project for the attribute name and compare with the schema",
+                "weight": 4,
+            },
+            {
+                "cause": "A mock or test double is missing the member that production code uses",
+                "why": "The failure only happens in tests",
+                "check": "Compare the double with the real class definition",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "dependency_mismatch",
+        "label": "Dependency / module resolution failure",
+        "severity": "high",
+        "fix_risk": 80,
+        "patterns": [
+            r"NoClassDefFoundError",
+            r"ClassNotFoundException",
+            r"ModuleNotFoundError",
+            r"ImportError",
+            r"cannot find module",
+            r"Unable to find package",
+            r"GemNotFound",
+            r"cannot resolve dependency",
+            r"PackageNotFound",
+            r"could not find artifact",
+            r"no such module",
+            r"cannot load such file",
+        ],
+        "summary": "A module, class or package the code needs is not on the classpath or in the bundle.",
+        "hypotheses": [
+            {
+                "cause": "The dependency was added to source but never declared in the manifest",
+                "why": "The import exists in the code but not in the dependency file",
+                "check": "Grep the manifest for the imported package name; add it and rebuild",
+                "weight": 5,
+            },
+            {
+                "cause": "The dependency is declared but excluded from the packaged artifact",
+                "why": "It works from the source checkout but not from the built image",
+                "check": "Inspect the built artifact contents, not the source tree",
+                "weight": 4,
+            },
+            {
+                "cause": "A version range resolved to a version that dropped or moved the symbol",
+                "why": "The failure appeared after a dependency bump with no code change",
+                "check": "Pin the dependency to the previous version and rebuild to confirm",
+                "weight": 4,
+            },
+            {
+                "cause": "A local module was renamed or moved and the path was not updated",
+                "why": "The missing module is a first-party package",
+                "check": "Check the path on disk and the import spelling side by side",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "resource_exhaustion",
+        "label": "Resource exhaustion (memory, files, connections, stack)",
+        "severity": "critical",
+        "fix_risk": 35,
+        "patterns": [
+            r"OutOfMemoryError",
+            r"Java heap space",
+            r"GC overhead limit exceeded",
+            r"MemoryError",
+            r"StackOverflowError",
+            r"RecursionError",
+            r"too many open files",
+            r"No space left on device",
+            r"EMFILE",
+            r"ENOMEM",
+            r"Unable to create new native thread",
+            r"too many connections",
+            r"connection pool.*exhaust",
+        ],
+        "summary": "The process ran out of a bounded resource: heap, stack, file descriptors or connection slots.",
+        "hypotheses": [
+            {
+                "cause": "An unbounded in-memory collection is being filled with no eviction",
+                "why": "Memory grows steadily with traffic rather than spiking",
+                "check": "Take a heap histogram during the failure and look for one collection dominating",
+                "weight": 4,
+            },
+            {
+                "cause": "A response or file is read fully into memory instead of streamed",
+                "why": "The peak size scales with the size of one input",
+                "check": "Check the failing path for a read-all or getBytes style call",
+                "weight": 4,
+            },
+            {
+                "cause": "A recursive path never terminates (mutual recursion, a cycle in the data)",
+                "why": "The failure is a stack overflow rather than a heap exhaustion",
+                "check": "Look for the same frame repeated in the trace",
+                "weight": 4,
+            },
+            {
+                "cause": "Connections or file handles are opened and never closed on the error path",
+                "why": "The count grows with the number of failures, not the number of successes",
+                "check": "Compare the handle count against the error count over time",
+                "weight": 4,
+            },
+            {
+                "cause": "A single request is too large for the configured limit",
+                "why": "Only one specific input shape fails",
+                "check": "Find the configured limit and compare it with the size of the failing input",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "timeout",
+        "label": "Timeout / deadline exceeded",
+        "severity": "high",
+        "fix_risk": 55,
+        "patterns": [
+            r"TimeoutException",
+            r"ReadTimeout",
+            r"ConnectTimeout",
+            r"ETIMEDOUT",
+            r"context deadline exceeded",
+            r"deadline exceeded",
+            r"timed out",
+            r"TimeoutError",
+            r"RequestTimeout",
+            r"504 Gateway Time-out",
+        ],
+        "summary": "An operation exceeded the time it was allowed to take.",
+        "hypotheses": [
+            {
+                "cause": "A downstream dependency is slow or degraded right now",
+                "why": "The timeout lands on a client call to another service",
+                "check": "Check the latency and error rate of that dependency over the same window",
+                "weight": 5,
+            },
+            {
+                "cause": "The timeout budget is shorter than the work legitimately needs",
+                "why": "The same call succeeds for small inputs and times out for large ones",
+                "check": "Compare the timeout value with the observed p95 duration of that call",
+                "weight": 4,
+            },
+            {
+                "cause": "A lock, contention point or serialised section makes the request queue",
+                "why": "The time is spent before the call, not inside it",
+                "check": "Look at a thread dump or trace span to see where the time accumulates",
+                "weight": 3,
+            },
+            {
+                "cause": "No timeout was set on the call, so the default (often infinite) applied",
+                "why": "The failure surfaces only after the caller's own deadline",
+                "check": "Add an explicit timeout to the client call, shorter than the caller's budget",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "connectivity",
+        "label": "Network / service unreachable",
+        "severity": "high",
+        "fix_risk": 60,
+        "patterns": [
+            r"ConnectionRefused",
+            r"ECONNREFUSED",
+            r"UnknownHostError",
+            r"connection refused",
+            r"name or service not known",
+            r"ServiceUnavailable",
+            r"502 Bad Gateway",
+            r"503 Service Unavailable",
+            r"504 Gateway",
+            r"NoRouteToHost",
+            r"Connection reset by peer",
+            r"ECONNRESET",
+            r"LoadBalancer",
+            r"no healthy upstream",
+        ],
+        "summary": "The process could not reach the service it needed.",
+        "hypotheses": [
+            {
+                "cause": "The downstream service is down or rolling a deploy right now",
+                "why": "The error is a refusal or a 503 from the target host",
+                "check": "Call the target directly from the same network and watch the deploy timeline",
+                "weight": 4,
+            },
+            {
+                "cause": "A hostname, port or path in the configuration is wrong",
+                "why": "The failure is total and reproducible for every caller",
+                "check": "Resolve and connect to the configured target by hand",
+                "weight": 4,
+            },
+            {
+                "cause": "Network policy, security group or DNS change blocks the path",
+                "why": "It worked before a change to infrastructure rather than to code",
+                "check": "Compare network policy and DNS records against the last working window",
+                "weight": 3,
+            },
+            {
+                "cause": "The client is exhausting its connection pool against a slow dependency",
+                "why": "Refusals appear under load while direct calls succeed",
+                "check": "Check pool saturation metrics for the same window",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "auth",
+        "label": "Authentication / authorisation failure",
+        "severity": "high",
+        "fix_risk": 65,
+        "patterns": [
+            r"\b401\b",
+            r"\b403\b",
+            r"Unauthorized",
+            r"UnauthorizedException",
+            r"Forbidden",
+            r"authentication failed",
+            r"invalid credentials",
+            r"token expired",
+            r"JWT",
+            r"InvalidSignatureException",
+            r"AccessDenied",
+            r"permission denied",
+        ],
+        "summary": "The request was rejected on identity or permission grounds.",
+        "hypotheses": [
+            {
+                "cause": "The credential expired (token TTL, rotating secret, certificate)",
+                "why": "The same client worked before and now fails with an expiry error",
+                "check": "Decode the token and compare exp against now and against the failure time",
+                "weight": 5,
+            },
+            {
+                "cause": "Clock skew between the issuer and the verifier",
+                "why": "The token was rejected as not-yet-valid or expired by a small margin",
+                "check": "Compare the issuer clock and the verifier clock at the failure time",
+                "weight": 4,
+            },
+            {
+                "cause": "The role or scope for this principal changed",
+                "why": "Other endpoints with the same token still work",
+                "check": "Decode the granted scopes and compare with the scope the endpoint requires",
+                "weight": 4,
+            },
+            {
+                "cause": "The wrong environment or tenant was targeted (staging key against production)",
+                "why": "The issuer in the token does not match the expected issuer",
+                "check": "Compare the issuer and audience fields with the values the service expects",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "config_missing",
+        "label": "Missing / invalid configuration",
+        "severity": "high",
+        "fix_risk": 85,
+        "patterns": [
+            r"Could not resolve placeholder",
+            r"Missing required (?:property|configuration|config)",
+            r"environment variable",
+            r"config(uration)? not found",
+            r"Failed to bind properties",
+            r"undefined env",
+            r"configurationexception",
+            r"missing configuration",
+            r"key not found in config",
+        ],
+        "summary": "A required configuration value was absent, empty or unparseable.",
+        "hypotheses": [
+            {
+                "cause": "The variable was never set in the environment that is actually running",
+                "why": "The code reads a config key that no deployment sets",
+                "check": "Print the environment keys of the running process and diff against the config key",
+                "weight": 5,
+            },
+            {
+                "cause": "The secret was mounted from a different path or a different vault",
+                "why": "The key is present in the vault but not in the container",
+                "check": "Inspect the mounted secret files and their keys in the failing pod",
+                "weight": 4,
+            },
+            {
+                "cause": "The value exists but is empty or malformed (bad URL, bad JSON, wrong type)",
+                "why": "The parse error names a specific field",
+                "check": "Parse the raw config value with the same parser the app uses",
+                "weight": 4,
+            },
+            {
+                "cause": "A config schema changed and one deployment still uses the old schema",
+                "why": "Only some instances fail",
+                "check": "Compare the config version across instances",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "concurrency",
+        "label": "Concurrency / locking failure",
+        "severity": "critical",
+        "fix_risk": 40,
+        "patterns": [
+            r"ConcurrentModificationException",
+            r"concurrent modification",
+            r"deadlock",
+            r"lock wait timeout",
+            r"data race",
+            r"already in use",
+            r"ResourceBusyException",
+            r"cannot lock",
+            r"lock contention",
+        ],
+        "summary": "Two or more workers collided over the same state.",
+        "hypotheses": [
+            {
+                "cause": "Shared mutable state is being modified while another thread iterates it",
+                "why": "The error names concurrent modification and the collection is a shared field",
+                "check": "Find the field that both threads touch and make it thread-safe or copy it before iterating",
+                "weight": 4,
+            },
+            {
+                "cause": "Two lock acquisitions happen in different orders in different code paths",
+                "why": "A deadlock is detected rather than a single lock timing out",
+                "check": "List every lock in the cycle and impose one global lock ordering",
+                "weight": 4,
+            },
+            {
+                "cause": "A lock is held across a slow I/O call, so waiters time out",
+                "why": "The lock wait timeout is close to the downstream call timeout",
+                "check": "Move the I/O outside the critical section",
+                "weight": 3,
+            },
+            {
+                "cause": "A retry storm makes contention self-inflicted",
+                "why": "The error rate scales with the number of clients retrying",
+                "check": "Add jittered backoff and check the retry volume in the same window",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "database",
+        "label": "Database / query failure",
+        "severity": "high",
+        "fix_risk": 55,
+        "patterns": [
+            r"SQLException",
+            r"SQLGrammarException",
+            r"relation .*does not exist",
+            r"duplicate key value",
+            r"deadlock detected",
+            r"too many connections",
+            r"connection pool",
+            r"DataIntegrityViolation",
+            r"lock timeout",
+            r"psycopg2",
+            r"OperationalError",
+        ],
+        "summary": "The database rejected or could not serve the query.",
+        "hypotheses": [
+            {
+                "cause": "A migration was not applied in this environment",
+                "why": "The error names a missing relation or column",
+                "check": "Compare the applied migration list in the failing database with the repository head",
+                "weight": 5,
+            },
+            {
+                "cause": "A unique constraint now conflicts with data that was written before it existed",
+                "why": "The error is a duplicate key on insert",
+                "check": "Find the conflicting rows and decide whether to dedupe or to version the constraint",
+                "weight": 4,
+            },
+            {
+                "cause": "The query has no timeout and held locks long enough to trip the deadlock detector",
+                "why": "Two transactions touch the same rows in opposite order",
+                "check": "Make the transaction order consistent and set a statement timeout",
+                "weight": 3,
+            },
+            {
+                "cause": "The pool is exhausted because connections are leaked or not returned",
+                "why": "The error is about connection count rather than the query",
+                "check": "Check pool metrics and the in-use count at the time of the failure",
+                "weight": 4,
+            },
+        ],
+    },
+    {
+        "id": "bad_data",
+        "label": "Malformed or unexpected data",
+        "severity": "medium",
+        "fix_risk": 70,
+        "patterns": [
+            r"JSONDecodeError",
+            r"ValidationError",
+            r"malformed",
+            r"invalid json",
+            r"cannot deserialize",
+            r"parse error",
+            r"UnicodeDecodeError",
+            r"InvalidFormatException",
+            r"unmarshal",
+            r"unexpected token",
+            r"BadRequestException",
+            r"failed to parse",
+        ],
+        "summary": "The data arrived in a shape the parser could not accept.",
+        "hypotheses": [
+            {
+                "cause": "The producer sent a shape it does not guarantee (optional field omitted, type widened)",
+                "why": "The parse error names the exact position that failed",
+                "check": "Capture the raw body and locate the failing byte or field",
+                "weight": 5,
+            },
+            {
+                "cause": "An error response was parsed as success data",
+                "why": "The body is HTML or a plain-text error message",
+                "check": "Check the status code and content type before parsing the body",
+                "weight": 4,
+            },
+            {
+                "cause": "An encoding mismatch (UTF-8 bytes read as latin-1)",
+                "why": "The failure is a decoding error rather than a structural one",
+                "check": "Decode the raw bytes with the declared charset and retry",
+                "weight": 4,
+            },
+            {
+                "cause": "A truncated or doubled payload (a proxy limit, a retry that re-sent a body)",
+                "why": "The parse fails near the end of the body",
+                "check": "Compare the received length with the Content-Length header",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "assertion",
+        "label": "Assertion / test failure",
+        "severity": "low",
+        "fix_risk": 85,
+        "patterns": [
+            r"AssertionError",
+            r"Assertion failed",
+            r"expected .*(?:but|to be) ?(?:got|to equal)",
+            r"expected: .* but was",
+            r"assertionerror",
+        ],
+        "summary": "A check failed: a test assertion or an invariant guard.",
+        "hypotheses": [
+            {
+                "cause": "The production behaviour changed and the assertion encodes the old behaviour",
+                "why": "The assertion is the only thing that changed in the diff",
+                "check": "Read the assertion against the current contract before changing either side",
+                "weight": 4,
+            },
+            {
+                "cause": "A genuine regression in the code under test",
+                "why": "The test fails only for one input shape",
+                "check": "Reproduce with the exact input and diff actual against expected",
+                "weight": 4,
+            },
+            {
+                "cause": "Test isolation: shared state or ordering leaked between tests",
+                "why": "The test passes alone and fails in the suite",
+                "check": "Run the test in isolation and then with its neighbours",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "rate_limit",
+        "label": "Rate limit / quota",
+        "severity": "medium",
+        "fix_risk": 65,
+        "patterns": [
+            r"\b429\b",
+            r"rate limit",
+            r"Too Many Requests",
+            r"quota exceeded",
+            r"throttl",
+            r"RESOURCE_EXHAUSTED",
+            r"exceeded the quota",
+        ],
+        "summary": "A rate limit or quota stopped the request.",
+        "hypotheses": [
+            {
+                "cause": "A burst exceeded the provider quota window",
+                "why": "The error carries the quota and the reset time",
+                "check": "Compare the request rate against the documented quota",
+                "weight": 5,
+            },
+            {
+                "cause": "A retry loop multiplied the load",
+                "why": "The volume that tripped the limit is larger than the application traffic",
+                "check": "Check how many of the requests in the window are retries",
+                "weight": 4,
+            },
+            {
+                "cause": "One caller is consuming the whole shared quota",
+                "why": "The rate is concentrated in one key or tenant",
+                "check": "Break the rate down per key or tenant",
+                "weight": 4,
+            },
+        ],
+    },
+    {
+        "id": "permission",
+        "label": "Permission / filesystem access",
+        "severity": "medium",
+        "fix_risk": 70,
+        "patterns": [
+            r"PermissionError",
+            r"EACCES",
+            r"access is denied",
+            r"not permitted",
+            r"Permission denied",
+            r"UnauthorizedAccessException",
+            r"read-only file system",
+        ],
+        "summary": "The process was not allowed to read, write or execute the resource.",
+        "hypotheses": [
+            {
+                "cause": "The file or directory is owned by another user and the process lost the right",
+                "why": "The path is outside the working directory the app normally owns",
+                "check": "Check the uid, the group and the mode bits on the path",
+                "weight": 5,
+            },
+            {
+                "cause": "The container runs as a non-root user without the mount it needs",
+                "why": "It works locally and fails in the container",
+                "check": "Compare the local uid with the container user and the mount ownership",
+                "weight": 4,
+            },
+            {
+                "cause": "A sandbox or security policy blocks the path",
+                "why": "The denial comes from a policy rather than the filesystem",
+                "check": "Inspect the policy rules for the path and the syscall",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "numeric",
+        "label": "Numeric / arithmetic failure",
+        "severity": "medium",
+        "fix_risk": 80,
+        "patterns": [
+            r"ZeroDivisionError",
+            r"ArithmeticException",
+            r"divide by zero",
+            r"\bNaN\b",
+            r"cannot be represented",
+        ],
+        "summary": "The arithmetic was undefined or out of range.",
+        "hypotheses": [
+            {
+                "cause": "The denominator can legitimately be zero (empty set, no matches)",
+                "why": "The value comes from a count or an aggregate",
+                "check": "Log the numerator and denominator before the division",
+                "weight": 5,
+            },
+            {
+                "cause": "A value exceeded the numeric range of the target type",
+                "why": "The magnitude is far outside the domain of the field",
+                "check": "Check the unit: a value in cents instead of dollars overflows a smallint",
+                "weight": 3,
+            },
+        ],
+    },
+    {
+        "id": "unknown",
+        "label": "Unclassified failure",
+        "severity": "medium",
+        "fix_risk": 60,
+        "patterns": [],
+        "summary": "The failure did not match any known signature in the local taxonomy.",
+        "hypotheses": [
+            {
+                "cause": "The error is a custom application exception with no shared contract",
+                "why": "The type name does not appear in any known taxonomy entry",
+                "check": "Find where the exception class is defined and read the throw site",
+                "weight": 3,
+            },
+            {
+                "cause": "The paste is missing the header line, so only the tail of the trace is present",
+                "why": "The first line is a frame rather than an exception line",
+                "check": "Re-copy the paste starting at the first line of the error",
+                "weight": 4,
+            },
+            {
+                "cause": "The failure is environmental rather than a code fault",
+                "why": "The type is generic (Error, Failure, Exception) with no detail",
+                "check": "Check the infrastructure events for the same window as the failure",
+                "weight": 3,
+            },
+        ],
+    },
+]
+
+BY_ID: Dict[str, Dict[str, Any]] = {c["id"]: c for c in CATEGORIES}
+
+
+def match_category(text: str) -> Dict[str, Any]:
+    """Return the best matching category for a block of error text."""
+    best = BY_ID["unknown"]
+    best_score = 0
+    for cat in CATEGORIES:
+        if not cat["patterns"]:
+            continue
+        score = 0
+        for pat in cat["patterns"]:
+            if re.search(pat, text, re.I):
+                score += 1
+        if score > best_score:
+            best_score = score
+            best = cat
+    return {
+        "id": best["id"],
+        "label": best["label"],
+        "severity": best["severity"],
+        "summary": best["summary"],
+        "confidence": min(100, 45 + best_score * 18) if best_score else 25,
+        "match_count": best_score,
+    }
+
+
+def get_category(cat_id: str) -> Optional[Dict[str, Any]]:
+    return BY_ID.get(cat_id)

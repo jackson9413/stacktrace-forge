@@ -1,0 +1,8 @@
+2026-11-19 08:02:11.221 ERROR [http-nio-8080-exec-9] c.a.i.ImportJob - Import failed
+2026-11-19 08:02:11.228 ERROR [http-nio-8080-exec-9] c.a.i.ImportJob - java.lang.RuntimeException: import failed
+	at com.acme.importer.ImportJob.run(ImportJob.java:88)
+	at com.acme.importer.ImportScheduler.execute(ImportScheduler.java:51)
+	at org.springframework.scheduling.support.ResolvableMethod.invoke(ResolvableMethod.java:199)
+	at org.springframework.scheduling.support.ScheduledMethodRunnable.run(ScheduledMethodRunnable.java:84)
+	at org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler$ScheduledFutureTask.run(ThreadPoolTaskScheduler.java:296)
+	at java.base/java.lang.Thread.run(Thread.java:1583)

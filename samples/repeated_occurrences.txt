@@ -1,0 +1,33 @@
+2026-11-19 09:12:01.101 ERROR [worker-1] c.a.o.OrderService - Failed to process order 48211
+java.lang.NullPointerException: Cannot invoke "com.acme.commerce.model.Customer.getTier()" because "customer" is null
+	at com.acme.commerce.OrderService.applyTier(OrderService.java:142)
+	at com.acme.commerce.OrderService.process(OrderService.java:88)
+
+---
+
+2026-11-19 09:12:04.902 ERROR [worker-1] c.a.o.OrderService - Failed to process order 48214
+java.lang.NullPointerException: Cannot invoke "com.acme.commerce.model.Customer.getTier()" because "customer" is null
+	at com.acme.commerce.OrderService.applyTier(OrderService.java:142)
+	at com.acme.commerce.OrderService.process(OrderService.java:88)
+
+---
+
+2026-11-19 09:12:09.774 ERROR [worker-2] c.a.o.OrderService - Failed to process order 48219
+java.lang.NullPointerException: Cannot invoke "com.acme.commerce.model.Customer.getTier()" because "customer" is null
+	at com.acme.commerce.OrderService.applyTier(OrderService.java:142)
+	at com.acme.commerce.OrderService.process(OrderService.java:88)
+
+---
+
+2026-11-19 09:13:02.551 ERROR [worker-3] c.a.o.OrderService - Failed to process order 48240
+java.lang.ArrayIndexOutOfBoundsException: Index 4 out of bounds for length 4
+	at com.acme.commerce.OrderService.applyTier(OrderService.java:139)
+	at com.acme.commerce.OrderService.process(OrderService.java:88)
+
+---
+
+2026-11-19 09:13:44.010 ERROR [worker-1] c.a.o.OrderService - Failed to process order 48255
+java.net.ConnectException: Connection refused (Connection refused)
+	at java.base/sun.nio.ch.NioSocketImpl.implConnect(NioSocketImpl.java:645)
+	at java.base/sun.nio.ch.NioSocketImpl.connect(NioSocketImpl.java:625)
+	at com.acme.commerce.ContractRepository.requireActive(ContractRepository.java:64)

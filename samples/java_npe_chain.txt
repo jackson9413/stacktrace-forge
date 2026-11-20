@@ -1,0 +1,13 @@
+2026-11-18 09:14:22.118 ERROR [http-nio-8080-exec-3] c.a.o.OrderService - Failed to process order 48211 for tenant acme-eu request_id=req_8f21ac
+java.lang.NullPointerException: Cannot invoke "com.acme.commerce.model.Customer.getTier()" because "customer" is null
+	at com.acme.commerce.OrderService.applyTier(OrderService.java:142)
+	at com.acme.commerce.OrderService.process(OrderService.java:88)
+	at com.acme.commerce.web.OrderController.submit(OrderController.java:51)
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.invokeHandlerMethod(RequestMappingHandlerAdapter.java:895)
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1072)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:1000)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:189)
+Caused by: java.lang.IllegalStateException: customer 48211 has no active contract
+	at com.acme.commerce.ContractRepository.requireActive(ContractRepository.java:64)
+	at com.acme.commerce.OrderService.applyTier(OrderService.java:139)
+	... 2 more

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "java_npe_chain",
+    "title": "Java NPE with a real cause chain",
+    "language": "java",
+    "file": "java_npe_chain.txt",
+    "description": "A Spring service throws a NullPointerException and the real reason is one Caused by level down: the customer has no active contract.",
+    "demonstrates": "The control case. Rich log context, correlation id, application frames and a cause chain - the tool should localise the fault at ContractRepository and rank the missing-contract hypothesis first."
+  },
+  {
+    "id": "java_generic_wrapper",
+    "title": "Java generic RuntimeException with no context",
+    "language": "java",
+    "file": "java_generic_wrapper.txt",
+    "description": "The importer logs 'import failed' and rethrows a bare RuntimeException, so the message says nothing and there is no request id.",
+    "demonstrates": "Why a vague message and a generic type destroy fix confidence even though the frames are perfectly good."
+  },
+  {
+    "id": "node_secret_undefined",
+    "title": "Node TypeError with a live API key in the log",
+    "language": "javascript",
+    "file": "node_secret_undefined.txt",
+    "description": "A webhook handler dereferences undefined, and the log line above it contains a live secret key.",
+    "demonstrates": "The critical red flag: good frames and a precise message, but a credential is exposed in the pasted output."
+  },
+  {
+    "id": "go_panic_recursion",
+    "title": "Go panic with a repeating frame",
+    "language": "go",
+    "file": "go_panic_recursion.txt",
+    "description": "A goroutine panics with an index out of range and the same frame repeats nine times.",
+    "demonstrates": "How a repeating frame turns the search for the deepest frame into a search for the loop that never terminates."
+  },
+  {
+    "id": "log_vague_no_trace",
+    "title": "Log-only paste with no trace and PII",
+    "language": "unknown",
+    "file": "log_vague_no_trace.txt",
+    "description": "Four error lines with no timestamps, no stack trace and a customer email address repeated.",
+    "demonstrates": "The floor case. Nothing to localise, nothing to reproduce, and personal data in the output."
+  },
+  {
+    "id": "repeated_occurrences",
+    "title": "Five occurrences of the same night",
+    "language": "java",
+    "file": "repeated_occurrences.txt",
+    "description": "Three identical NPEs, one index error and one connection refusal, separated by lines of three dashes.",
+    "demonstrates": "The clustering view: one dominant signature, a long tail, and the point where a paste stops being one bug and becomes a pattern."
+  }
+]

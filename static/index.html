@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stacktrace-forge</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <h1>stacktrace-forge</h1>
+    <p class="tag">Paste a stack trace or a log excerpt. Get the origin frame, the ranked hypotheses, the triage order and a scored review. Everything runs locally.</p>
+  </div>
+  <div class="top-actions">
+    <label>Profile
+      <select id="profile"></select>
+    </label>
+    <label>Language
+      <select id="language">
+        <option value="auto">auto-detect</option>
+        <option value="java">java</option>
+        <option value="python">python</option>
+        <option value="javascript">javascript</option>
+        <option value="csharp">csharp</option>
+        <option value="go">go</option>
+        <option value="rust">rust</option>
+        <option value="ruby">ruby</option>
+        <option value="php">php</option>
+      </select>
+    </label>
+  </div>
+</header>
+
+<main>
+  <section class="panel input-panel">
+    <div class="panel-head">
+      <h2>Input</h2>
+      <div class="row">
+        <select id="sample"></select>
+        <button id="sample-load" class="ghost">Load sample</button>
+      </div>
+    </div>
+    <textarea id="input" spellcheck="false" placeholder="Paste the stack trace or the log lines here..."></textarea>
+    <div class="row actions">
+      <button id="analyze" class="primary">Analyse</button>
+      <button id="cluster-btn">Cluster occurrences</button>
+      <button id="export-md" class="ghost">Export MD</button>
+      <button id="export-json" class="ghost">Export JSON</button>
+      <button id="export-csv" class="ghost">Export CSV</button>
+      <button id="clear" class="ghost">Clear</button>
+    </div>
+    <p class="hint">Separate multiple occurrences with a line of three dashes: ---</p>
+  </section>
+
+  <section class="panel results">
+    <div id="empty" class="empty">Paste a failure and press Analyse.</div>
+
+    <div id="result" hidden>
+      <div class="card verdict-card">
+        <div class="score-block">
+          <div class="score" id="score">0</div>
+          <div class="score-max">/ 100</div>
+        </div>
+        <div class="verdict-text">
+          <div class="verdict-name" id="verdict"></div>
+          <div class="muted" id="verdict-blurb"></div>
+          <div class="muted small" id="meta-line"></div>
+        </div>
+        <div class="caps" id="caps"></div>
+      </div>
+
+      <div class="card">
+        <h3>Scorecard</h3>
+        <div id="axes" class="axes"></div>
+      </div>
+
+      <div class="card">
+        <h3>Failure</h3>
+        <div id="failure"></div>
+      </div>
+
+      <div class="card">
+        <div class="tabs">
+          <button class="tab active" data-tab="hypotheses">Hypotheses</button>
+          <button class="tab" data-tab="findings">Findings</button>
+          <button class="tab" data-tab="triage">Triage</button>
+          <button class="tab" data-tab="repro">Repro</button>
+          <button class="tab" data-tab="plan">Fix plan</button>
+          <button class="tab" data-tab="logs">Log signals</button>
+          <button class="tab" data-tab="cluster">Cluster</button>
+        </div>
+        <div id="tab-hypotheses" class="tabpanel active"></div>
+        <div id="tab-findings" class="tabpanel"></div>
+        <div id="tab-triage" class="tabpanel"></div>
+        <div id="tab-repro" class="tabpanel"></div>
+        <div id="tab-plan" class="tabpanel"></div>
+        <div id="tab-logs" class="tabpanel"></div>
+        <div id="tab-cluster" class="tabpanel"></div>
+      </div>
+
+      <div class="card">
+        <h3>Run log</h3>
+        <div class="row">
+          <select id="rating">
+            <option value="">rating...</option>
+            <option value="1">1 - useless</option>
+            <option value="2">2 - weak</option>
+            <option value="3">3 - ok</option>
+            <option value="4">4 - good</option>
+            <option value="5">5 - nailed it</option>
+          </select>
+          <input id="notes" placeholder="notes">
+          <button id="save-run">Save run</button>
+        </div>
+        <div id="runs" class="runs"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
